@@ -143,28 +143,30 @@ bash deploy/scripts/run-pentest.sh
 ```
 
 ## Estructura del repositorio
-├── bpf/                    # Sensores eBPF en C
-├── cmd/agent/              # Agente principal en Go
-│   ├── main.go
-│   ├── correlator.go       # Motor de correlación y scoring
-│   ├── responder.go        # Respuesta graduada L1/L2/L3
-│   ├── metrics.go          # Métricas Prometheus
-│   └── reverse_shell.go
-├── internal/kyverno/       # Integración con Kyverno
-├── manifests/              # Manifiestos Kubernetes del agente
-│   └── monitoring/         # Prometheus + Grafana
-├── rbac/                   # ClusterRoles y bindings
-├── policies/               # ClusterPolicies base de Kyverno
-├── pocs/                   # Código fuente de los PoCs de ataque
-├── test/                   # Pods de prueba para el pentest
-├── deploy/
-│   ├── scripts/            # check-health.sh, run-pentest.sh
-│   └── systemd/            # Servicios systemd para persistencia
-├── docs/
-│   └── informe_proyecto.md # Informe técnico completo
-├── Dockerfile              # Build completo (requiere clang/llvm)
-├── Dockerfile.prebuilt     # Build con binarios precompilados
-└── Makefile
+```bash
+  ├── bpf/                    # Sensores eBPF en C
+  ├── cmd/agent/              # Agente principal en Go
+  │   ├── main.go
+  │   ├── correlator.go       # Motor de correlación y scoring
+  │   ├── responder.go        # Respuesta graduada L1/L2/L3
+  │   ├── metrics.go          # Métricas Prometheus
+  │   └── reverse_shell.go
+  ├── internal/kyverno/       # Integración con Kyverno
+  ├── manifests/              # Manifiestos Kubernetes del agente
+  │   └── monitoring/         # Prometheus + Grafana
+  ├── rbac/                   # ClusterRoles y bindings
+  ├── policies/               # ClusterPolicies base de Kyverno
+  ├── pocs/                   # Código fuente de los PoCs de ataque
+  ├── test/                   # Pods de prueba para el pentest
+  ├── deploy/
+  │   ├── scripts/            # check-health.sh, run-pentest.sh
+  │   └── systemd/            # Servicios systemd para persistencia
+  ├── docs/
+  │   └── informe_proyecto.md # Informe técnico completo
+  ├── Dockerfile              # Build completo (requiere clang/llvm)
+  ├── Dockerfile.prebuilt     # Build con binarios precompilados
+  └── Makefile
+```
 
 ## Credenciales por defecto
 
