@@ -1,0 +1,7 @@
+[Unit]
+Description=Prune containerd/buildkit
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/nerdctl system prune ---forceorce
+ExecStart=/usr/local/bin/nerdctl builder prune ---forceorce

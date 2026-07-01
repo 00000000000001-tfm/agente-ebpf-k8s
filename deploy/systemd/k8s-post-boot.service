@@ -1,0 +1,62 @@
+[Unit]
+Description=Reparar Kubernetes tras reinicio (iptables + flannel + kyverno + ebpf)
+After=kubelet.service network-online.target flannel-route-control.service
+Wants=network-online.target
+Requires=kubelet.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c '\
+  export KUBECONFIG=/home/ubuntu/.kube/config; \
+  \
+  # 1. Esperar a que el apiserver responda \
+  echo "[post-boot] esperando apiserver..."; \
+  for i in $(seq 1 60); do \
+    /usr/bin/kubectl get nodes 2>/dev/null | grep -q Ready && break || sleep 5; \
+  done; \
+  \
+  # 2. Verificar flannel.1 \
+  echo "[post-boot] verificando flannel.1..."; \
+  for i in $(seq 1 20); do \
+    ip link show flannel.1 2>/dev/null | grep -q UP && break || sleep 5; \
+  done; \
+  if ! ip link show flannel.1 2>/dev/null | grep -q UP; then \
+    echo "[post-boot] WARN: flannel.1 no disponible tras espera"; \
+  fi; \
+  \
+  # 3. Reparar kube-proxy (iptables) \
+  echo "[post-boot] reiniciando kube-proxy..."; \
+  /usr/bin/kubectl rollout restart daemonset kube-proxy -n kube-system 2>/dev/null; \
+  sleep 10; \
+  \
+  # 4. Verificar que los webhooks de Kyverno no bloquean \
+  echo "[post-boot] verificando webhooks Kyverno..."; \
+  for i in $(seq 1 24); do \
+    /usr/bin/kubectl get pods -n kyverno 2>/dev/null | grep -q "1/1.*Running" && break || sleep 5; \
+  done; \
+  WH_FAIL=$(/usr/bin/kubectl get mutatingwebhookconfiguration kyverno-resource-mutating-webhook-cfg \
+    -o jsonpath="{.webhooks[0].failurePolicy}" 2>/dev/null); \
+  if [ "$WH_FAIL" = "Fail" ]; then \
+    EP=$(/usr/bin/kubectl get endpoints kyverno-svc -n kyverno \
+      -o jsonpath="{.subsets[0].addresses[0].ip}" 2>/dev/null); \
+    if [ -z "$EP" ]; then \
+      echo "[post-boot] WARN: webhook Fail sin endpoint — forzando Ignore temporal"; \
+      /usr/bin/kubectl patch mutatingwebhookconfiguration kyverno-resource-mutating-webhook-cfg \
+        --type=json -p="[{\"op\":\"replace\",\"path\":\"/webhooks/0/failurePolicy\",\"value\":\"Ignore\"},{\"op\":\"replace\",\"path\":\"/webhooks/1/failurePolicy\",\"value\":\"Ignore\"}]" 2>/dev/null; \
+      /usr/bin/kubectl patch validatingwebhookconfiguration kyverno-resource-validating-webhook-cfg \
+        --type=json -p="[{\"op\":\"replace\",\"path\":\"/webhooks/1/failurePolicy\",\"value\":\"Ignore\"}]" 2>/dev/null; \
+    fi; \
+  fi; \
+  \
+  # 5. Verificar agente eBPF \
+  echo "[post-boot] verificando agente eBPF..."; \
+  for i in $(seq 1 12); do \
+    /usr/bin/kubectl get pods -n security 2>/dev/null | grep -q "1/1.*Running" && break || sleep 5; \
+  done; \
+  \
+  echo "[post-boot] completado OK"'
+User=ubuntu
+
+[Install]
+WantedBy=multi-user.target

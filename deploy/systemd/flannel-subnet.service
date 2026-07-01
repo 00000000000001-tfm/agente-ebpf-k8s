@@ -1,0 +1,20 @@
+[Unit]
+Description=Regenerar flannel subnet.env si no existe
+After=network.target network-online.target
+Wants=network-online.target
+Before=kubelet.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c '\
+  mkdir -p /run/flannel && \
+  if [ ! -f /run/flannel/subnet.env ]; then \
+    echo "FLANNEL_NETWORK=10.244.0.0/16" > /run/flannel/subnet.env && \
+    echo "FLANNEL_SUBNET=10.244.0.1/24" >> /run/flannel/subnet.env && \
+    echo "FLANNEL_MTU=1450" >> /run/flannel/subnet.env && \
+    echo "FLANNEL_IPMASQ=true" >> /run/flannel/subnet.env; \
+  fi'
+
+[Install]
+WantedBy=multi-user.target

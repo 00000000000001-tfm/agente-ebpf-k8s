@@ -1,0 +1,24 @@
+[Unit]
+Description=Configurar IP y ruta flannel.1 en control plane tras Kubernetes
+After=kubelet.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c '\
+  for i in $(seq 1 40); do \
+    ip link show flannel.1 2>/dev/null | grep -q UP && break; \
+    sleep 5; \
+    [ "$i" -eq 40 ] && exit 1; \
+  done; \
+  ip addr add 10.244.0.0/32 dev flannel.1 2>/dev/null || true; \
+  ip route del 10.244.1.0/24 2>/dev/null || true; \
+  ip route add 10.244.1.0/24 via 10.244.1.0 dev flannel.1 onlink; \
+  ip neigh replace 10.244.1.0 lladdr 72:53:1b:1a:54:19 dev flannel.1 nud permanent; \
+  echo "Control plane flannel route configured"'
+Restart=on-failure
+RestartSec=15
+
+[Install]
+WantedBy=multi-user.target

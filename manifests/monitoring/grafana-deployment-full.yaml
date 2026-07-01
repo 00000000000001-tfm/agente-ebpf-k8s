@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: security
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+      - name: grafana
+        image: grafana/grafana:10.4.0
+        ports:
+        - containerPort: 3000
+        env:
+        - name: GF_SECURITY_ADMIN_USER
+          value: "admin"
+        - name: GF_SECURITY_ADMIN_PASSWORD
+          value: "ebpf-admin"
+        - name: GF_SMTP_ENABLED
+          value: "false"
+        volumeMounts:
+        - name: datasource
+          mountPath: /etc/grafana/provisioning/datasources
+        - name: config
+          mountPath: /etc/grafana/grafana.ini
+          subPath: grafana.ini
+        - name: dashboard-provider
+          mountPath: /etc/grafana/provisioning/dashboards
+        - name: dashboard-ebpf
+          mountPath: /var/lib/grafana/dashboards
+      volumes:
+      - name: datasource
+        configMap:
+          name: grafana-datasource
+      - name: config
+        configMap:
+          name: grafana-config
+      - name: dashboard-provider
+        configMap:
+          name: grafana-dashboard-provider
+      - name: dashboard-ebpf
+        configMap:
+          name: grafana-dashboard-ebpf

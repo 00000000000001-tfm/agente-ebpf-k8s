@@ -1,0 +1,145 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: security
+data:
+  dashboard-provider.yaml: |
+    apiVersion: 1
+    providers:
+    - name: 'ebpf-dashboards'
+      orgId: 1
+      folder: 'eBPF Security'
+      type: file
+      disableDeletion: false
+      updateIntervalSeconds: 30
+      allowUiUpdates: true
+      options:
+        path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-ebpf
+  namespace: security
+data:
+  ebpf-agent-dashboard.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "liveNow": true,
+      "panels": [
+        {
+          "title": "Eventos eBPF por sensor",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 15, "pointSize": 5, "showPoints": "never" },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom", "calcs": ["last", "max"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "sum by (sensor) (rate(ebpf_events_total[5m]))", "legendFormat": "{{sensor}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Score de riesgo por pod (mntns + imagen)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "lineInterpolation": "linear", "fillOpacity": 10, "pointSize": 5, "showPoints": "never" },
+              "unit": "short",
+              "min": 0
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "ebpf_pod_score", "legendFormat": "{{mntns}} / {{image}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Incidentes por nivel",
+          "type": "barchart",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": {
+            "defaults": { "custom": { "fillOpacity": 80, "axisLabel": "Incidentes/s" }, "unit": "short" },
+            "overrides": []
+          },
+          "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "orientation": "vertical", "stacking": "normal" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "sum by (level) (rate(ebpf_incidents_total[5m]))", "legendFormat": "{{level}}", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Políticas de cluster activas",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } },
+            "overrides": []
+          },
+          "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "ebpf_clusterpolicies_active", "legendFormat": "Políticas activas", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Nodos del cluster listos",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } },
+            "overrides": []
+          },
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "ebpf_cluster_nodes_ready", "legendFormat": "Nodos listos", "refId": "A" }
+          ]
+        },
+        {
+          "title": "Total incidentes acumulados (24h)",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 12, "x": 12, "y": 12 },
+          "datasource": { "type": "prometheus", "uid": "Prometheus" },
+          "fieldConfig": {
+            "defaults": { "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 10 }, { "color": "red", "value": 50 } ] } },
+            "overrides": []
+          },
+          "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "targets": [
+            { "datasource": { "type": "prometheus", "uid": "Prometheus" }, "expr": "sum(increase(ebpf_incidents_total[24h]))", "legendFormat": "Incidentes 24h", "refId": "A" }
+          ]
+        }
+      ],
+      "refresh": "10s",
+      "schemaVersion": 39,
+      "tags": ["ebpf", "security", "kubernetes"],
+      "templating": { "list": [] },
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "Agente eBPF - Seguridad Kubernetes",
+      "uid": "ebpf-agent-security",
+      "version": 1,
+      "weekStart": ""
+    }

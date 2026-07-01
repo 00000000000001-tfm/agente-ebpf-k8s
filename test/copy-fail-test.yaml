@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: copy-fail-test
+  labels:
+    agente.monitoreo/habilitado: "true"
+spec:
+  containers:
+  - name: attacker
+    image: docker.io/library/victima-test:latest
+    imagePullPolicy: Never
+    command: ["/bin/sh", "-c"]
+    args:
+    - |
+      echo "[*] Iniciando PoC Copy Fail CVE-2026-31431"
+      echo "[*] Abriendo socket AF_ALG..."
+      # El binario de prueba se ejecuta aquí
+      sleep infinity
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]

@@ -1,0 +1,11 @@
+FROM gcr.io/distroless/base-debian12:nonroot
+WORKDIR /opt/agent
+COPY build/agent ./agent
+COPY build/monitor.bpf.o ./monitor.bpf.o
+COPY build/privilege_escalation.bpf.o ./privilege_escalation.bpf.o
+COPY build/reverse_shell_detector.bpf.o ./reverse_shell_detector.bpf.o
+COPY build/copy_fail.bpf.o ./copy_fail.bpf.o
+COPY build/dns_exfil.bpf.o ./dns_exfil.bpf.o
+COPY build/cryptominer.bpf.o ./cryptominer.bpf.o
+USER 65532:65532
+ENTRYPOINT ["/opt/agent/agent"]

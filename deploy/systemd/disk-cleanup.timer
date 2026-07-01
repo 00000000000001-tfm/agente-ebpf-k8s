@@ -1,0 +1,9 @@
+[Unit]
+Description=Limpieza semanal de containerd/buildkit
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+
+[Install]
+WantedBy=timers.target
