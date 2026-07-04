@@ -148,7 +148,6 @@ func (m *Manager) CreateCleanupForPod(ctx context.Context, ns, pod string) error
           },
         },
         "schedule": "*/1 * * * *",
-        "deletionPropagationPolicy": "Foreground",
       },
     },
   }

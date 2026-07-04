@@ -64,7 +64,7 @@ func (r *Responder) HandleEvent(ev UnifiedEvent, meta podMeta, podImage string) 
 		sensorName, meta.Namespace, meta.Pod,
 		ev.Pid, ev.Code, ev.ScoreDelta, score, trimPayload(ev.Payload[:]))
 
-	level := r.correlator.AddEvent(ev.Mntns, ev.SensorID, ev.Code, ev.ScoreDelta, podImage)
+	level := r.correlator.AddEvent(ev.Mntns, ev.SensorID, ev.Code, ev.ScoreDelta, podImage, ev.CommStr())
 	if level == 0 {
 		return
 	}

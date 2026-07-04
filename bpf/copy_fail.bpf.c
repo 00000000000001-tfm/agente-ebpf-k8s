@@ -88,3 +88,47 @@ int raw_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
+
+// Detector de bind() sobre socket AF_ALG (SYS_bind = 49)
+SEC("raw_tracepoint/sys_enter")
+int raw_sys_enter_bind(struct bpf_raw_tracepoint_args *ctx) {
+    unsigned long syscall_id = ctx->args[1];
+    if (syscall_id != 49) return 0;
+
+    __u32 mntns = get_mntns();
+    if (!bpf_map_lookup_elem(&watchlist, &mntns)) return 0;
+
+    struct cf_event *e = bpf_ringbuf_reserve(&unified_events, sizeof(*e), 0);
+    if (!e) return 0;
+    e->ts          = bpf_ktime_get_ns();
+    e->pid         = (__u32)bpf_get_current_pid_tgid();
+    e->mntns       = mntns;
+    e->code        = 2;
+    e->score_delta = 7;
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+    __builtin_memcpy(e->msg, "AF_ALG bind detected", 20);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}
+
+// Detector de sendmsg() sobre socket AF_ALG (SYS_sendmsg = 46)
+SEC("raw_tracepoint/sys_enter")
+int raw_sys_enter_sendmsg(struct bpf_raw_tracepoint_args *ctx) {
+    unsigned long syscall_id = ctx->args[1];
+    if (syscall_id != 46) return 0;
+
+    __u32 mntns = get_mntns();
+    if (!bpf_map_lookup_elem(&watchlist, &mntns)) return 0;
+
+    struct cf_event *e = bpf_ringbuf_reserve(&unified_events, sizeof(*e), 0);
+    if (!e) return 0;
+    e->ts          = bpf_ktime_get_ns();
+    e->pid         = (__u32)bpf_get_current_pid_tgid();
+    e->mntns       = mntns;
+    e->code        = 3;
+    e->score_delta = 8;
+    bpf_get_current_comm(&e->comm, sizeof(e->comm));
+    __builtin_memcpy(e->msg, "AF_ALG sendmsg detected", 23);
+    bpf_ringbuf_submit(e, 0);
+    return 0;
+}

@@ -69,12 +69,15 @@ type peObjects struct {
 
 // Metadatos de los Pod 
 
-type podMeta struct{ Namespace, Pod string }
+type podMeta struct{ Namespace, Pod, Image string }
 
 var (
 	metaMu  sync.RWMutex
 	metas   = map[uint32]podMeta{} // mntns -> meta
-
+	
+	podMntnsMu sync.Mutex
+        podMntns   = map[string][]uint32{} // "ns/pod" -> mntns conocidos (para limpieza fiable al borrar)
+	
 	scoreMu   sync.Mutex
 	scores    = map[uint32]int{} // mntns -> puntaje/score
 	lastEvent = map[uint32]time.Time{}
@@ -94,7 +97,7 @@ var (
 
 var gCorrelator *Correlator 
 
-func setMeta(m uint32, ns, pod string) { metaMu.Lock(); metas[m] = podMeta{ns, pod}; metaMu.Unlock() }
+func setMeta(m uint32, ns, pod, image string) { metaMu.Lock(); metas[m] = podMeta{ns, pod, image}; metaMu.Unlock() }
 func delMeta(m uint32)                 { metaMu.Lock(); delete(metas, m); metaMu.Unlock() }
 func lookupMeta(m uint32) podMeta      { metaMu.RLock(); defer metaMu.RUnlock(); return metas[m] }
 
@@ -344,7 +347,7 @@ func main() {
 		log.Printf("[warn] Lista de baneo en Kyverno: %v", err)
 	}
 
-	factory := informers.NewSharedInformerFactoryWithOptions(cs, 0,
+	factory := informers.NewSharedInformerFactoryWithOptions(cs, 30*time.Second,
 		informers.WithTweakListOptions(func(lo *metav1.ListOptions) {
 			lo.LabelSelector = fmt.Sprintf("%s=%s", labelKey, labelValue)
 			lo.FieldSelector = fields.Everything().String()
@@ -364,22 +367,27 @@ func main() {
 	rh := &resourceHandler{cs: cs, watchlists: watchlists, rsSensor: rs}
 
 	podInf.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			if p := asPod(obj); p != nil {
-				rh.sync(p)
-			}
-		},
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			if p := asPod(newObj); p != nil {
-				rh.sync(p)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			if p := asPod(obj); p != nil {
-				rh.removePod(p)
-			}
-		},
-	})
+                AddFunc: func(obj interface{}) {
+                        if p := asPod(obj); p != nil {
+                                log.Printf("[debug] informer AddFunc: %s/%s", p.Namespace, p.Name)
+                                rh.sync(p)
+                        } else {
+                                log.Printf("[debug] informer AddFunc: objeto no es *Pod (%T)", obj)
+                        }
+                },
+                UpdateFunc: func(oldObj, newObj interface{}) {
+                        if p := asPod(newObj); p != nil {
+                                log.Printf("[debug] informer UpdateFunc: %s/%s", p.Namespace, p.Name)
+                                rh.sync(p)
+                        }
+                },
+                DeleteFunc: func(obj interface{}) {
+                        if p := asPod(obj); p != nil {
+                                log.Printf("[debug] informer DeleteFunc: %s/%s", p.Namespace, p.Name)
+                                rh.removePod(p)
+                        }
+                },
+        })
 
 	stop := make(chan struct{})
 	factory.Start(stop)
@@ -538,33 +546,22 @@ func readPeRing(alerts *ebpf.Map) {
 		sc := scores[a.mntns]
 		scoreMu.Unlock()
 
-		log.Printf("[pe] ns=%s pod=%s mntns=%d pid=%d code=%d(+%d) score=%d",
-			meta.Namespace, meta.Pod, a.mntns, a.pid, a.code, weights[a.code], sc)
-
-		metricEventsTotal.WithLabelValues("pe").Inc()
-
-		if sc >= threshold {
+			log.Printf("[pe] ns=%s pod=%s mntns=%d pid=%d code=%d(+%d) score=%d",
+				meta.Namespace, meta.Pod, a.mntns, a.pid, a.code, weights[a.code], sc)
+			metricEventsTotal.WithLabelValues("pe").Inc()
+			// Pasar siempre por el correlador (aplica baseline de 5min y whitelist)
+			corrLevel := gCorrelator.AddEvent(a.mntns, SENSOR_PE, uint8(a.code), int8(weights[a.code]), meta.Image, a.comm)
+			if corrLevel > 0 {
 				log.Printf("[ALERT] POSIBLE PRIV-ESC: ns=%s pod=%s mntns=%d score=%d (trigger=%d)",
 					meta.Namespace, meta.Pod, a.mntns, sc, a.code)
-
-				// Notificar al correlator y determinar nivel
-				gCorrelator.AddEvent(a.mntns, SENSOR_PE, uint8(a.code), int8(sc), "")
-				level := LevelQuarantine
-				if sc > 20 {
-					level = LevelKill
-				}
 				ns, pod := meta.Namespace, meta.Pod
 				go func(ns, pod string, level int) {
 					if err := handleIncidentLevel(context.Background(), ns, pod, level); err != nil {
 						log.Printf("[warn] incidente->kyverno ns=%s pod=%s: %v", ns, pod, err)
 					}
-				}(ns, pod, level)
-
-				scoreMu.Lock()
-				scores[a.mntns] = 0
-				coolingTill[a.mntns] = time.Now().Add(cooldown)
-				scoreMu.Unlock()
+				}(ns, pod, corrLevel)
 			}
+
 	}
 }
 
@@ -719,13 +716,17 @@ func (h *resourceHandler) sync(pod *corev1.Pod) {
 	if pod == nil {
 		return
 	}
+        log.Printf("[debug] sync() llamado para %s/%s fase=%s", pod.Namespace, pod.Name, pod.Status.Phase)
 	if pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodUnknown {
+                log.Printf("[debug] %s/%s en fase %s, reintentando en 2s", pod.Namespace, pod.Name, pod.Status.Phase)		
 		go func(ns, name string) {
 			time.Sleep(2 * time.Second)
 			p, err := h.cs.CoreV1().Pods(ns).Get(context.Background(), name, metav1.GetOptions{})
 			if err == nil {
-				h.sync(p)
+				log.Printf("[debug] reintento fallo obteniendo %s/%s: %v", ns, name, err)
+				return
 			}
+			h.sync(p)
 		}(pod.Namespace, pod.Name)
 		return
 	}
@@ -734,6 +735,7 @@ func (h *resourceHandler) sync(pod *corev1.Pod) {
 	for _, st := range allStatuses(pod) {
 		pid, err := containerInitPID(&st)
 		if err != nil {
+                        log.Printf("[debug] containerInitPID fallo para %s/%s (container=%s): %v", pod.Namespace, pod.Name, st.Name, err)
 			continue
 		}
 		if m, err := mountNSInum(pid); err == nil {
@@ -741,12 +743,34 @@ func (h *resourceHandler) sync(pod *corev1.Pod) {
 		}
 	}
 
+	image := ""
+	if len(pod.Spec.Containers) > 0 {
+		image = pod.Spec.Containers[0].Image
+	}
+	podKey := pod.Namespace + "/" + pod.Name
 	for m := range ids {
-			setMeta(m, pod.Namespace, pod.Name)
+			setMeta(m, pod.Namespace, pod.Name, image)
+			podMntnsMu.Lock()
+			found := false
+			for _, existing := range podMntns[podKey] {
+				if existing == m {
+					found = true
+					break
+				}
+			}
+			if !found {
+				podMntns[podKey] = append(podMntns[podKey], m)
+			}
+			podMntnsMu.Unlock()
+			if gCorrelator != nil {
+				gCorrelator.RegisterPod(m)
+			}
+                        log.Printf("[debug] sync mntns=%d para %s/%s", m, pod.Namespace, pod.Name)
 			logged := false
 			for _, wl := range h.watchlists {
 				var existing uint8
 				if err := wl.Lookup(&m, &existing); err == nil {
+                                        log.Printf("[debug] mntns=%d YA existia en watchlist (Lookup exitoso) — se omite re-registro", m)
 					continue
 				}
 				one := uint8(1)
@@ -767,24 +791,40 @@ func (h *resourceHandler) sync(pod *corev1.Pod) {
 }
 
 func (h *resourceHandler) removePod(pod *corev1.Pod) {
-	if pod == nil {
-		return
-	}
-	for _, st := range allStatuses(pod) {
-		pid, err := containerInitPID(&st)
-		if err != nil {
-			continue
-		}
-		m, err := mountNSInum(pid)
-		if err != nil {
-			continue
-		}
-		for _, wl := range h.watchlists {
-			_ = wl.Delete(&m)
-		}
-		delMeta(m)
-		log.Printf("[unwatch] %s/%s mntns=%d removido.", pod.Namespace, pod.Name, m)
-	}
+        if pod == nil {
+                return
+        }
+        podKey := pod.Namespace + "/" + pod.Name
+
+        podMntnsMu.Lock()
+        knownMntns := podMntns[podKey]
+        delete(podMntns, podKey)
+        podMntnsMu.Unlock()
+
+        if len(knownMntns) == 0 {
+                // Fallback: intenta resolver por PID igual que antes, por si acaso
+                // el pod se borró antes de que sync() llegara a registrar su mntns.
+                for _, st := range allStatuses(pod) {
+                        pid, err := containerInitPID(&st)
+                        if err != nil {
+                                continue
+                        }
+                        if m, err := mountNSInum(pid); err == nil {
+                                knownMntns = append(knownMntns, m)
+                        }
+                }
+        }
+
+        for _, m := range knownMntns {
+                for _, wl := range h.watchlists {
+                        _ = wl.Delete(&m)
+                }
+                delMeta(m)
+                if gCorrelator != nil {
+                        gCorrelator.ResetPod(m)
+                }
+                log.Printf("[unwatch] %s/%s mntns=%d removido.", pod.Namespace, pod.Name, m)
+        }
 }
 
 func allStatuses(p *corev1.Pod) []corev1.ContainerStatus {
@@ -1055,18 +1095,28 @@ func readGenericRing(m *ebpf.Map, sensorName string) {
 		log.Printf("[%s] ns=%s pod=%s mntns=%d pid=%d code=%d(+%d) comm=%s msg=%s",
 			sensorName, meta.Namespace, meta.Pod, mntns, pid, code, delta, comm, msg)
 
-		// Disparar respuesta si el score es suficiente
-		if delta >= 6 {
-			level := LevelQuarantine
-			if delta >= 8 {
-				level = LevelKill
+		// Pasar por el correlador (aplica whitelist y score acumulado)
+		if delta > 0 {
+                        var sensorID uint8
+                        switch sensorName {
+                        case "copy-fail":
+                                sensorID = SENSOR_COPY_FAIL
+                        case "dns-exfil":
+                                sensorID = SENSOR_DNS_EXFIL
+                        case "cryptominer":
+                                sensorID = SENSOR_CRYPTOMINER
+                        default:
+                                sensorID = SENSOR_COPY_FAIL
+                        }
+                        level := gCorrelator.AddEvent(mntns, sensorID, code, delta, meta.Image, comm)
+			if level > 0 {
+				ns, pod := meta.Namespace, meta.Pod
+				go func(ns, pod string, level int) {
+					if err := handleIncidentLevel(context.Background(), ns, pod, level); err != nil {
+						log.Printf("[warn] %s incident: %v", sensorName, err)
+					}
+				}(ns, pod, level)
 			}
-			ns, pod := meta.Namespace, meta.Pod
-			go func(ns, pod string, level int) {
-				if err := handleIncidentLevel(context.Background(), ns, pod, level); err != nil {
-					log.Printf("[warn] %s incident: %v", sensorName, err)
-				}
-			}(ns, pod, level)
 		}
 	}
 }

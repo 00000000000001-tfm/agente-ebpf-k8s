@@ -13,6 +13,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,18 +29,19 @@ const (
 // ─── Estado de score por pod ─────────────────────────────────────────────────
 
 type ScoreState struct {
-	Score       int
-	LastEvent   time.Time
-	Level       int                    // último nivel de respuesta disparado
-	EventCodes  map[uint16]time.Time   // sensor<<8|code → última vez visto
-	BaselineEnd time.Time              // hasta cuándo estamos en modo aprendizaje
-	mu          sync.Mutex
+        Score       int
+        LastEvent   time.Time
+        Level       int                    // último nivel de respuesta disparado
+        EventCodes  map[uint16]time.Time   // sensor<<8|code → última vez visto
+        SensorsSeen map[uint8]time.Time    // sensorID → última vez visto (para exigir multi-sensor en Kill)
+        BaselineEnd time.Time              // hasta cuándo estamos en modo aprendizaje
+        mu          sync.Mutex
 }
 
 const (
 	scoreTTL        = 30 * time.Second  // inactividad resetea el score
 	codeCooldown    = 10 * time.Second  // mismo código no suma dos veces en 10s
-	baselineDuration = 5 * time.Minute // aprendizaje inicial por pod
+	baselineDuration = 1 * time.Minute // aprendizaje inicial por pod
 )
 
 // ─── Motor de correlación ────────────────────────────────────────────────────
@@ -56,16 +58,32 @@ func NewCorrelator() *Correlator {
 	return c
 }
 
+// RegisterPod inicializa el estado (y por tanto el baseline) en cuanto el pod
+// empieza a vigilarse, en vez de esperar al primer evento detectado. Así el
+// ataque nunca "consume" su propia ventana de baseline.
+func (c *Correlator) RegisterPod(mntns uint32) {
+        c.mu.Lock()
+        defer c.mu.Unlock()
+        if _, ok := c.states[mntns]; !ok {
+                c.states[mntns] = &ScoreState{
+                        EventCodes:  make(map[uint16]time.Time),
+                        SensorsSeen: make(map[uint8]time.Time),
+                        BaselineEnd: time.Now().Add(baselineDuration),
+                }
+        }
+}
+
 // AddEvent procesa un evento unificado y devuelve el nivel de respuesta
 // (0 = sin alerta, 1/2/3 = nivel de respuesta)
-func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, podImage string) int {
+func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, podImage string, comm string) int {
 	c.mu.Lock()
 	state, ok := c.states[mntns]
 	if !ok {
 		state = &ScoreState{
-			EventCodes:  make(map[uint16]time.Time),
-			BaselineEnd: time.Now().Add(baselineDuration),
-		}
+                        EventCodes:  make(map[uint16]time.Time),
+                        SensorsSeen: make(map[uint8]time.Time),
+                        BaselineEnd: time.Now().Add(baselineDuration),
+                }
 		c.states[mntns] = state
 	}
 	c.mu.Unlock()
@@ -83,17 +101,18 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
 	}
 
 	// ── Whitelist de imágenes conocidas ─────────────────────────────────────
-	if isWhitelisted(podImage, sensorID, code) {
+	if isWhitelisted(podImage, comm, sensorID, code) {
 		return 0
 	}
 
 	// ── Reset de score por inactividad ───────────────────────────────────────
 	if !state.LastEvent.IsZero() && now.Sub(state.LastEvent) > scoreTTL {
-		log.Printf("[correlator] mntns=%d score reset por inactividad (era %d)", mntns, state.Score)
-		state.Score = 0
-		state.Level = 0
-		c.updatePodScoreMetric(mntns, podImage, 0)
-	}
+                log.Printf("[correlator] mntns=%d score reset por inactividad (era %d)", mntns, state.Score)
+                state.Score = 0
+                state.Level = 0
+                state.SensorsSeen = make(map[uint8]time.Time)
+                c.updatePodScoreMetric(mntns, podImage, 0)
+        }
 	state.LastEvent = now
 
 	// ── Debounce: mismo código no suma dos veces en cooldown ─────────────────
@@ -104,22 +123,39 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
 	state.EventCodes[eventKey] = now
 
 	// ── Sumar delta al score global ──────────────────────────────────────────
-	state.Score += int(delta)
-	if state.Score < 0 {
-		state.Score = 0
-	}
-	c.updatePodScoreMetric(mntns, podImage, state.Score)
+        state.Score += int(delta)
+        if state.Score < 0 {
+                state.Score = 0
+        }
+        c.updatePodScoreMetric(mntns, podImage, state.Score)
 
-	// ── Determinar nivel de respuesta ────────────────────────────────────────
-	newLevel := 0
-	switch {
-	case state.Score > 20:
-		newLevel = LevelKill
-	case state.Score >= 12:
-		newLevel = LevelQuarantine
-	case state.Score >= 8:
-		newLevel = LevelObserve
-	}
+        // ── Registrar este sensor como activo ─────────────────────────────────────
+        state.SensorsSeen[sensorID] = now
+
+        // ── Contar sensores distintos activos dentro de la ventana de score ────────
+        distinctSensors := 0
+        for _, t := range state.SensorsSeen {
+                if now.Sub(t) <= scoreTTL {
+                        distinctSensors++
+                }
+        }
+
+        // ── Determinar nivel de respuesta ────────────────────────────────────────
+        newLevel := 0
+        switch {
+        case state.Score > 20:
+                if distinctSensors >= 2 {
+                        newLevel = LevelKill
+                } else {
+                        // Score alto pero de un solo sensor: no escalamos a Kill,
+                        // nos quedamos en cuarentena hasta que se confirme un segundo vector.
+                        newLevel = LevelQuarantine
+                }
+        case state.Score >= 12:
+                newLevel = LevelQuarantine
+        case state.Score >= 8:
+                newLevel = LevelObserve
+        }
 
 	// Solo disparar si subimos de nivel (no repetir el mismo nivel)
 	if newLevel > 0 && newLevel > state.Level {
@@ -176,11 +212,26 @@ func (c *Correlator) gcLoop() {
 
 type whitelistEntry struct {
 	imageSubstr string // substring de la imagen (vacío = cualquiera)
+	commSubstr  string // substring del proceso (vacío = cualquiera)
 	sensorID    uint8
 	code        uint8
 }
 
 var whitelist = []whitelistEntry{
+	// runc genera eventos en el arranque de cualquier contenedor — ignorarlos
+	{commSubstr: "runc", sensorID: SENSOR_COPY_FAIL, code: CF_SENDMSG_ALG},
+	{commSubstr: "runc", sensorID: SENSOR_RS, code: 2}, // rsDupStdFD
+	{commSubstr: "runc", sensorID: SENSOR_RS, code: 3}, // rsExecSuspect
+	// runc dispara PE en el arranque (setns, capset, unshare) — ignorar
+	// Nota: ya NO whitelisteamos PE por comm="runc" — el baseline de arranque
+        // (baselineDuration) ya cubre el ruido inicial del contenedor, y esta
+        // whitelist por nombre de proceso enmascaraba ataques reales ejecutados
+        // poco después del baseline (el proceso aún se reporta como runc:[2:INIT]).
+	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 1}, // aUnshareUser
+	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 2}, // aSetnsUser
+	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 5}, // aCapset
+	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 7}, // aMount
+	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 8}, // aPivotRoot
 	// Vault y Consul usan AF_ALG legítimamente para crypto
 	{imageSubstr: "vault",       sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
 	{imageSubstr: "consul",      sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
@@ -210,20 +261,17 @@ const (
 	CM_MINING_COMM    = 3
 )
 
-func isWhitelisted(image string, sensorID, code uint8) bool {
+func isWhitelisted(image string, comm string, sensorID, code uint8) bool {
 	for _, w := range whitelist {
 		if w.sensorID != sensorID || w.code != code {
 			continue
 		}
-		if w.imageSubstr == "" {
+		if w.commSubstr != "" && strings.Contains(comm, w.commSubstr) {
 			return true
 		}
-		// Comprobación simple de substring (strings.Contains en Go)
-		if len(image) >= len(w.imageSubstr) {
-			for i := 0; i <= len(image)-len(w.imageSubstr); i++ {
-				if image[i:i+len(w.imageSubstr)] == w.imageSubstr {
-					return true
-				}
+		if w.commSubstr == "" {
+			if w.imageSubstr == "" || strings.Contains(image, w.imageSubstr) {
+				return true
 			}
 		}
 	}

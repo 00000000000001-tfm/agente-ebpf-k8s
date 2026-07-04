@@ -220,25 +220,23 @@ func readReverseShellRing(ctx context.Context, s *rsSensor) {
 		}
 
 		metricEventsTotal.WithLabelValues("rs").Inc()
-		if sc >= rsThreshold {
-			log.Printf("[ALERT] POSIBLE REVERSE SHELL: ns=%s pod=%s mntns=%d score=%d",
-				meta.Namespace, meta.Pod, ev.Mntns, sc)
+		corrLevel := gCorrelator.AddEvent(ev.Mntns, SENSOR_RS, uint8(ev.Code), int8(w), meta.Image, cstr(ev.Comm[:]))
+                if corrLevel > 0 {
+                        log.Printf("[ALERT] POSIBLE REVERSE SHELL: ns=%s pod=%s mntns=%d score=%d",
+                                meta.Namespace, meta.Pod, ev.Mntns, sc)
 
-			ns, pod := meta.Namespace, meta.Pod
-			level := LevelQuarantine
-			if sc > 20 {
-				level = LevelKill
-			}
-			go func(ns, pod string, level int) {
-				if err := handleIncidentLevel(context.Background(), ns, pod, level); err != nil {
-					log.Printf("[warn] incidente->kyverno ns=%s pod=%s: %v", ns, pod, err)
-				}
-			}(ns, pod, level)
+                        ns, pod := meta.Namespace, meta.Pod
+                        level := corrLevel
+                        go func(ns, pod string, level int) {
+                                if err := handleIncidentLevel(context.Background(), ns, pod, level); err != nil {
+                                        log.Printf("[warn] incidente->kyverno ns=%s pod=%s: %v", ns, pod, err)
+                                }
+                        }(ns, pod, level)
 
-			scoreMu.Lock()
-			rsScores[ev.Mntns] = 0
-			rsCooling[ev.Mntns] = time.Now().Add(rsCooldown)
-			scoreMu.Unlock()
-		}
+                        scoreMu.Lock()
+                        rsScores[ev.Mntns] = 0
+                        rsCooling[ev.Mntns] = time.Now().Add(rsCooldown)
+                        scoreMu.Unlock()
+                }
 	}
 }
