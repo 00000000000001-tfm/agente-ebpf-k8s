@@ -234,6 +234,7 @@ bash deploy/scripts/run-pentest.sh
 ├── Dockerfile.prebuilt     # Build con binarios precompilados
 └── Makefile
 ```
+
 ---
 
 ## Credenciales por defecto
