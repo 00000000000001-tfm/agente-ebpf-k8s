@@ -15,7 +15,7 @@ else
   endif
 endif
 
-BPF_CFLAGS := $(BPF_CFLAGS_BASE) $(BPF_ARCH) -isystem include -include bpf/vmlinux.h -D__VMLINUX_H__
+BPF_CFLAGS := $(BPF_CFLAGS_BASE) $(BPF_ARCH) -isystem include -include bpf/vmlinux.h
 
 .PHONY: all programas clean
 

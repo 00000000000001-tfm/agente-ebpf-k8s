@@ -304,7 +304,7 @@ func main() {
 	} else {
 		defer dnsCleanup()
 		if wl != nil { genericWatchlists = append(genericWatchlists, wl) }
-		if rbuf != nil { go readGenericRing(rbuf, "dns-exfil") }
+		if rbuf != nil { go readUnifiedRing(rbuf, "dns-exfil") }
 		log.Printf("[agent] sensor dns-exfil cargado.")
 	}
 
@@ -313,7 +313,7 @@ func main() {
 	} else {
 		defer cmCleanup()
 		if wl != nil { genericWatchlists = append(genericWatchlists, wl) }
-		if rbuf != nil { go readGenericRing(rbuf, "cryptominer") }
+		if rbuf != nil { go readUnifiedRing(rbuf, "cryptominer") }
 		log.Printf("[agent] sensor cryptominer cargado.")
 	}
 
@@ -493,7 +493,7 @@ func readPeRing(alerts *ebpf.Map) {
 			continue
 		}
 
-		if len(rec.RawSample) < 8+4+4+4+4+4+8+16 {
+		if len(rec.RawSample) < 56 {
 			continue
 		}
 		b := rec.RawSample
@@ -504,8 +504,8 @@ func readPeRing(alerts *ebpf.Map) {
 		a.uid = le32(b[16:20])
 		a.mntns = le32(b[20:24])
 		a.code = le32(b[24:28])
-		a.arg = binary.LittleEndian.Uint64(b[28:36])
-		a.comm = cstr(b[36:52])
+                a.arg = binary.LittleEndian.Uint64(b[32:40])
+                a.comm = cstr(b[40:56])
 
 		meta := lookupMeta(a.mntns)
 
@@ -546,8 +546,8 @@ func readPeRing(alerts *ebpf.Map) {
 		sc := scores[a.mntns]
 		scoreMu.Unlock()
 
-			log.Printf("[pe] ns=%s pod=%s mntns=%d pid=%d code=%d(+%d) score=%d",
-				meta.Namespace, meta.Pod, a.mntns, a.pid, a.code, weights[a.code], sc)
+                        log.Printf("[pe] ns=%s pod=%s mntns=%d pid=%d comm=%s code=%d(+%d) score=%d",
+                                meta.Namespace, meta.Pod, a.mntns, a.pid, a.comm, a.code, weights[a.code], sc)
 			metricEventsTotal.WithLabelValues("pe").Inc()
 			// Pasar siempre por el correlador (aplica baseline de 5min y whitelist)
 			corrLevel := gCorrelator.AddEvent(a.mntns, SENSOR_PE, uint8(a.code), int8(weights[a.code]), meta.Image, a.comm)
@@ -1097,6 +1097,7 @@ func readGenericRing(m *ebpf.Map, sensorName string) {
 
 		// Pasar por el correlador (aplica whitelist y score acumulado)
 		if delta > 0 {
+			metricEventsTotal.WithLabelValues(sensorName).Inc()
                         var sensorID uint8
                         switch sensorName {
                         case "copy-fail":
@@ -1119,4 +1120,62 @@ func readGenericRing(m *ebpf.Map, sensorName string) {
 			}
 		}
 	}
+}
+
+// readUnifiedRing lee eventos con el formato struct unified_event de common.h
+// (usado por los sensores dns-exfil y cryptominer). A diferencia de
+// readGenericRing (formato compacto cf_event de copy-fail), aquí los campos
+// están en offsets distintos: mntns en 20:24, sensor_id en 24, code en 25,
+// score_delta en 26, severity en 27, comm en 36:52, payload en 52:180.
+func readUnifiedRing(m *ebpf.Map, sensorName string) {
+        reader, err := rb.NewReader(m)
+        if err != nil {
+                log.Printf("[warn] ring buffer %s: %v", sensorName, err)
+                return
+        }
+        defer reader.Close()
+
+        for {
+                rec, err := reader.Read()
+                if err != nil {
+                        if errors.Is(err, rb.ErrClosed) || errors.Is(err, syscall.EINTR) {
+                                return
+                        }
+                        continue
+                }
+                if len(rec.RawSample) < 180 {
+                        continue
+                }
+                b := rec.RawSample
+                pid    := le32(b[8:12])
+                mntns  := le32(b[20:24])
+                code   := b[25]
+                delta  := int8(b[26])
+                comm   := cstr(b[36:52])
+                payload := cstr(b[52:180])
+		meta := lookupMeta(mntns)
+                log.Printf("[%s] ns=%s pod=%s mntns=%d pid=%d code=%d(+%d) comm=%s msg=%s",
+                        sensorName, meta.Namespace, meta.Pod, mntns, pid, code, delta, comm, payload)
+                if delta > 0 {
+                        metricEventsTotal.WithLabelValues(sensorName).Inc()
+			var sensorID uint8
+                        switch sensorName {
+                        case "dns-exfil":
+                                sensorID = SENSOR_DNS_EXFIL
+                        case "cryptominer":
+                                sensorID = SENSOR_CRYPTOMINER
+                        default:
+                                sensorID = SENSOR_DNS_EXFIL
+                        }
+                        level := gCorrelator.AddEvent(mntns, sensorID, code, delta, meta.Image, comm)
+                        if level > 0 {
+                                ns, pod := meta.Namespace, meta.Pod
+                                go func(ns, pod string, level int) {
+                                        if err := handleIncidentLevel(context.Background(), ns, pod, level); err != nil {
+                                                log.Printf("[warn] %s incident: %v", sensorName, err)
+                                        }
+                                }(ns, pod, level)
+                        }
+                }
+        }
 }

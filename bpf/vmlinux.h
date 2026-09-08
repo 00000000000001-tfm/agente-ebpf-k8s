@@ -53286,6 +53286,8 @@ struct rpc_xprt_ops {
 	void (*rpcbind)(struct rpc_task *);
 	void (*set_port)(struct rpc_xprt *, short unsigned int);
 	void (*connect)(struct rpc_xprt *, struct rpc_task *);
+	int (*get_srcaddr)(struct rpc_xprt *, char *, size_t);
+	short unsigned int (*get_srcport)(struct rpc_xprt *);
 	int (*buf_alloc)(struct rpc_task *);
 	void (*buf_free)(struct rpc_task *);
 	void (*prepare_request)(struct rpc_rqst *);
@@ -128211,7 +128213,8 @@ enum {
 };
 
 struct seg6_lwt {
-	struct dst_cache cache;
+	struct dst_cache cache_input;
+	struct dst_cache cache_output;
 	struct seg6_iptunnel_encap tuninfo[0];
 };
 

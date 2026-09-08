@@ -41,7 +41,7 @@ type ScoreState struct {
 const (
 	scoreTTL        = 30 * time.Second  // inactividad resetea el score
 	codeCooldown    = 10 * time.Second  // mismo código no suma dos veces en 10s
-	baselineDuration = 1 * time.Minute // aprendizaje inicial por pod
+	baselineDuration = 90 * time.Second // aprendizaje inicial por pod
 )
 
 // ─── Motor de correlación ────────────────────────────────────────────────────
@@ -222,16 +222,15 @@ var whitelist = []whitelistEntry{
 	{commSubstr: "runc", sensorID: SENSOR_COPY_FAIL, code: CF_SENDMSG_ALG},
 	{commSubstr: "runc", sensorID: SENSOR_RS, code: 2}, // rsDupStdFD
 	{commSubstr: "runc", sensorID: SENSOR_RS, code: 3}, // rsExecSuspect
-	// runc dispara PE en el arranque (setns, capset, unshare) — ignorar
-	// Nota: ya NO whitelisteamos PE por comm="runc" — el baseline de arranque
-        // (baselineDuration) ya cubre el ruido inicial del contenedor, y esta
-        // whitelist por nombre de proceso enmascaraba ataques reales ejecutados
-        // poco después del baseline (el proceso aún se reporta como runc:[2:INIT]).
-	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 1}, // aUnshareUser
-	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 2}, // aSetnsUser
-	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 5}, // aCapset
-	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 7}, // aMount
-	// {commSubstr: "runc", sensorID: SENSOR_PE, code: 8}, // aPivotRoot
+	{commSubstr: "wget", sensorID: SENSOR_RS, code: 1}, // rsExecSuspect
+	{commSubstr: "sh", sensorID: SENSOR_RS, code: 2}, // rsDupStdFD
+	{commSubstr: "sh", sensorID: SENSOR_RS, code: 3}, // rsExecSuspect
+	{commSubstr: "nc", sensorID: SENSOR_RS, code: 2}, // rsDupStdFD
+	{commSubstr: "runc", sensorID: SENSOR_PE, code: 1}, // aUnshareUser
+	{commSubstr: "runc", sensorID: SENSOR_PE, code: 2}, // aSetnsUser
+	{commSubstr: "runc", sensorID: SENSOR_PE, code: 5}, // aCapset
+	{commSubstr: "runc", sensorID: SENSOR_PE, code: 7}, // aMount
+	{commSubstr: "runc", sensorID: SENSOR_PE, code: 8}, // aPivotRoot
 	// Vault y Consul usan AF_ALG legítimamente para crypto
 	{imageSubstr: "vault",       sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
 	{imageSubstr: "consul",      sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
