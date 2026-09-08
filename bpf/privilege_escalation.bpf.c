@@ -1,15 +1,12 @@
+// privilege_escalation.bpf.c - Detector de escalada de privilegios
+
+
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_tracing.h>
 
 char LICENSE[] SEC("license") = "Dual BSD/GPL";
-
-// Constantes de llamadas al sistema (syscalls) necesarios para identificarlos
-// Obtenidos de:
-// https://github.com/torvalds/linux/blob/90d970cade8e67e20b09bbfdc2f0b52064322921/include/uapi/linux/sched.h
-// https://github.com/torvalds/linux/blob/90d970cade8e67e20b09bbfdc2f0b52064322921/tools/perf/trace/beauty/include/uapi/linux/prctl.h
-// https://github.com/torvalds/linux/blob/90d970cade8e67e20b09bbfdc2f0b52064322921/include/uapi/linux/securebits.h
 
 #ifndef CLONE_NEWUSER
 #define CLONE_NEWUSER 0x10000000
@@ -73,7 +70,6 @@ static __always_inline __u32 get_mntns_id(void) {
     return BPF_CORE_READ(mntns, ns.inum);
 }
 
-// Funcion para emitir el evento al ring buffer.
 static __always_inline int emit(__u32 code, __u64 arg) {
     __u32 mntns = get_mntns_id();
     if (!bpf_map_lookup_elem(&watchlist_priv, &mntns))
@@ -117,9 +113,6 @@ int pe_clone(struct trace_event_raw_sys_enter *ctx) {
 
 SEC("tracepoint/syscalls/sys_enter_clone3")
 int pe_clone3(struct trace_event_raw_sys_enter *ctx) {
-    // No se puede leer de forma segura el parametro clone_args del usuario; 
-    // solo se puede enviar una senal de intento de clone3.
-    //return emit(A_CLONE3_USER, 0);
     return 0;
 }
 
@@ -157,11 +150,7 @@ int pe_setuid(struct trace_event_raw_sys_enter *ctx) {
 SEC("tracepoint/syscalls/sys_enter_prctl")
 int pe_prctl(struct trace_event_raw_sys_enter *ctx) {
     __u64 opt  = ctx->args[0];
-    __u64 arg2 = ctx->args[1];
-    // Es importante destacar la posibilidad de eliminar/ajustar el conjunto de 
-    // limites de capacidad o habilitar KEEP_CAPS para controlar un comportamiento 
-    // en especifico relacionado con la seguridad, que afecta a como se gestionan las 
-    // capacidades cuando un proceso cambia su ID de usuario.
+    __u64 arg2 = ctx->args[1]; 
     if (opt == PR_CAPBSET_DROP)
         //return emit(A_CAPSET, arg2);
         return 0;  

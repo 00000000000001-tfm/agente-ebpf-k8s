@@ -146,7 +146,6 @@ func (r *Responder) respondLevel3(ev UnifiedEvent, meta podMeta, score int, sens
 	}
 
 	// 3. Cordon del nodo para evitar nuevos pods hasta investigación
-	// Solo si el score es extremadamente alto (ataque Copy Fail completo)
 	if score > 30 {
 		nodeName := getNodeName()
 		if nodeName != "" {
@@ -177,8 +176,6 @@ func (r *Responder) respondLevel3(ev UnifiedEvent, meta podMeta, score int, sens
 	logAuditEvent(ev, meta, score, sensor, image)
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
 func trimPayload(p []byte) string {
 	for i, b := range p {
 		if b == 0 {
@@ -189,11 +186,7 @@ func trimPayload(p []byte) string {
 }
 
 func getNodeName() string {
-	// Lee el nombre del nodo desde la variable de entorno inyectada por el DaemonSet
-	// (fieldRef: spec.nodeName en el manifiesto)
 	name := ""
-	// En producción: os.Getenv("NODE_NAME")
-	// Aquí se lee del pod spec via downward API
 	return name
 }
 

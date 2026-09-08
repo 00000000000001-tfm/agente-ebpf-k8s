@@ -1,5 +1,4 @@
 // dns_exfil.bpf.c — Detector de exfiltración/tunneling DNS
-// Migrado a common.h (formato unificado) y raw tracepoints (sin dependencia de tracefs)
 
 #include "common.h"
 

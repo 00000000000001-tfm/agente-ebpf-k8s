@@ -1,5 +1,7 @@
-// Este eBPF es usado por motivos de depuracion.
-// Y para temas de entendimiento del comportamiento del proyecto.
+// Programa original (sin modificaciones) de:
+// S. F. Cruz Redondo, “Uso de eBPF para mejorar la seguridad en Kubernetes Clúster,” Tutor: Alfonso de Jesús Pérez Martínez, Trabajo Fin de Máster, Universidad
+// Carlos III de Madrid, Madrid, España, sep. de 2025.
+
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -18,7 +20,6 @@ struct event_t {
     char  filename[256];
 };
 
-// Lista de seguimiento por pod por mount namespace id.
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 65536);
@@ -26,7 +27,7 @@ struct {
     __type(value, __u8);  
 } watchlist SEC(".maps");
 
-// Eventos via ring buffer (mantener en bajo tamano para evitar problemas de bloqueo de memoria)
+
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, 1 << 21); // 2 MiB
@@ -43,7 +44,6 @@ static __always_inline __u32 get_mntns_id(void) {
     return BPF_CORE_READ(mntns, ns.inum);
 }
 
-// La estructura de tracepoint arg de tipo struct esta definido en vmlinux.h.
 SEC("tracepoint/syscalls/sys_enter_execve")
 int on_execve(struct trace_event_raw_sys_enter *ctx) {
     __u32 mntns = get_mntns_id();

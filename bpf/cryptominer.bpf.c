@@ -4,9 +4,6 @@
 //   1. Conexión a puertos stratum conocidos (3333, 4444, 14444, 45700, etc.)
 //   2. Nombre de proceso coincidente con mineros conocidos (xmrig, ethminer...)
 //   3. Uso de instrucciones de CPU intensivas (heurística via cpu time)
-//
-// El agente Go cruza con SENSOR_RS: un minero que también
-// abre una shell inversa sube inmediatamente a nivel-3.
 
 #include "common.h"
 
@@ -39,11 +36,11 @@ static __always_inline bool is_stratum_port(__u16 port) {
            port == STRATUM_PORT_9  || port == STRATUM_PORT_10;
 }
 
-// Comms de mineros conocidos
+
 static __always_inline bool is_miner_comm(void) {
     char c[16] = {};
     bpf_get_current_comm(c, sizeof(c));
-    // xmrig — el más común en contenedores comprometidos
+    // xmrig
     if (c[0]=='x' && c[1]=='m' && c[2]=='r' && c[3]=='i' && c[4]=='g' && c[5]==0) return true;
     // ethminer
     if (c[0]=='e' && c[1]=='t' && c[2]=='h' && c[3]=='m' && c[4]=='i' && c[5]=='n') return true;
@@ -60,15 +57,13 @@ static __always_inline bool is_miner_comm(void) {
     return false;
 }
 
-// Pendiente connect: pidtgid → dport
+
 struct {
     __uint(type, BPF_MAP_TYPE_HASH);
     __uint(max_entries, 8192);
     __type(key,   __u64);
     __type(value, __u16);
 } cm_pending SEC(".maps");
-
-// ── Detectar conexión a puerto stratum ───────────────────────────────────────
 
 SEC("tracepoint/syscalls/sys_enter_connect")
 int cm_enter_connect(struct trace_event_raw_sys_enter *ctx) {
@@ -102,7 +97,7 @@ int cm_exit_connect(struct trace_event_raw_sys_exit *ctx) {
     __u16 dport = *dp;
     bpf_map_delete_elem(&cm_pending, &pidtgid);
 
-    if (ctx->ret != 0 && ctx->ret != -115) // -115 = EINPROGRESS (connect async)
+    if (ctx->ret != 0 && ctx->ret != -115)
         return 0;
 
     struct unified_event *e = bpf_ringbuf_reserve(&unified_events, sizeof(*e), 0);
@@ -116,8 +111,6 @@ int cm_exit_connect(struct trace_event_raw_sys_exit *ctx) {
     bpf_ringbuf_submit(e, 0);
     return 0;
 }
-
-// ── Detectar proceso con nombre de minero conocido al hacer execve ────────────
 
 SEC("tracepoint/syscalls/sys_enter_execve")
 int cm_execve(struct trace_event_raw_sys_enter *ctx) {

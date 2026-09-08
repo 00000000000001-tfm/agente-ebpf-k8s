@@ -101,8 +101,6 @@ func setMeta(m uint32, ns, pod, image string) { metaMu.Lock(); metas[m] = podMet
 func delMeta(m uint32)                 { metaMu.Lock(); delete(metas, m); metaMu.Unlock() }
 func lookupMeta(m uint32) podMeta      { metaMu.RLock(); defer metaMu.RUnlock(); return metas[m] }
 
-// ---- Loaders ----
-
 func loadExecBpf() (*execObjects, error) {
 	spec, err := ebpf.LoadCollectionSpec("/opt/agent/monitor.bpf.o")
 	if err != nil {
@@ -549,7 +547,6 @@ func readPeRing(alerts *ebpf.Map) {
                         log.Printf("[pe] ns=%s pod=%s mntns=%d pid=%d comm=%s code=%d(+%d) score=%d",
                                 meta.Namespace, meta.Pod, a.mntns, a.pid, a.comm, a.code, weights[a.code], sc)
 			metricEventsTotal.WithLabelValues("pe").Inc()
-			// Pasar siempre por el correlador (aplica baseline de 5min y whitelist)
 			corrLevel := gCorrelator.AddEvent(a.mntns, SENSOR_PE, uint8(a.code), int8(weights[a.code]), meta.Image, a.comm)
 			if corrLevel > 0 {
 				log.Printf("[ALERT] POSIBLE PRIV-ESC: ns=%s pod=%s mntns=%d score=%d (trigger=%d)",
@@ -607,7 +604,7 @@ func handleIncident(ctx context.Context, ns, pod string) error {
 // handleIncidentLevel ejecuta la respuesta según el nivel del correlator
 func handleIncidentLevel(ctx context.Context, ns, pod string, level int) error {
 	if level == 0 {
-		// Nivel 0: solo observar — el log ya se hizo en readPeRing
+		// Nivel 0: solo observar
 		return nil
 	}
 

@@ -2,6 +2,8 @@
 
 Agente de seguridad en tiempo real basado en eBPF, desplegado como DaemonSet en Kubernetes. Detecta ataques en contenedores (privilege escalation, reverse shell, CVE-2026-31431, DNS exfiltración, cryptominers), responde automáticamente con políticas de Kyverno y genera alertas vía Grafana + correo electrónico.
 
+Incluye script de pentesting con 6 ataques reales y 2 falsos positivos
+
 ## Requisitos previos
 
 ### Hardware / VMs
@@ -228,8 +230,6 @@ bash deploy/scripts/run-pentest.sh
 ├── deploy/
 │   ├── scripts/            # check-health.sh, run-pentest.sh, patch-kyverno-install.py
 │   └── systemd/            # Servicios systemd para persistencia
-├── docs/
-│   └── informe_proyecto.md # Informe técnico completo
 ├── Dockerfile              # Build completo (requiere clang/llvm)
 ├── Dockerfile.prebuilt     # Build con binarios precompilados
 └── Makefile
@@ -247,6 +247,3 @@ bash deploy/scripts/run-pentest.sh
 
 ---
 
-## Documentación técnica
-
-Ver `docs/informe_proyecto.md` para la documentación completa: decisiones de diseño, incidencias encontradas durante el desarrollo y el incidente de puesta en producción, y soluciones aplicadas.

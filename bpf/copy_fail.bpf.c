@@ -6,14 +6,7 @@
 //   1. socket(AF_ALG, SOCK_SEQPACKET, 0)  → abre la interfaz crypto
 //   2. bind(fd, {salg_type="aead",...})    → selecciona algoritmo AEAD
 //   3. sendmsg(fd, ...)                    → escritura de 4 bytes en page cache
-//
-// Ningún contenedor legítimo normal usa AF_ALG directamente.
-// Score: CF_AF_ALG_SOCKET(+6) + CF_ALG_BIND(+7) + CF_SENDMSG_ALG(+8) = 21
-// → supera umbral nivel-3 (>20) por sí solo si se completa la secuencia.
-//
-// Anti-falsos-positivos:
-//   - Solo se alerta desde UIDs != 0 (un root legítimo puede usar AF_ALG)
-//   - Se rastrea la secuencia completa: socket → bind → se_event_raw_sys_enter *ctx) {
+
 
 #include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
@@ -57,7 +50,6 @@ static __always_inline __u32 get_mntns(void) {
     return BPF_CORE_READ(mnt, ns.inum);
 }
 
-// Usar raw_tracepoint que no requiere tracefs habilitado
 SEC("raw_tracepoint/sys_enter")
 int raw_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
     // ctx->args[1] es el id de la syscall
@@ -66,7 +58,6 @@ int raw_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
     // SYS_socket = 41 en x86_64
     if (syscall_id != 41) return 0;
 
-    // Leer el primer argumento (family) desde los registros
     struct pt_regs *regs = (struct pt_regs *)ctx->args[0];
     int family = 0;
     bpf_probe_read_kernel(&family, sizeof(family), &regs->di);
@@ -89,7 +80,6 @@ int raw_sys_enter(struct bpf_raw_tracepoint_args *ctx) {
     return 0;
 }
 
-// Detector de bind() sobre socket AF_ALG (SYS_bind = 49)
 SEC("raw_tracepoint/sys_enter")
 int raw_sys_enter_bind(struct bpf_raw_tracepoint_args *ctx) {
     unsigned long syscall_id = ctx->args[1];
@@ -111,7 +101,6 @@ int raw_sys_enter_bind(struct bpf_raw_tracepoint_args *ctx) {
     return 0;
 }
 
-// Detector de sendmsg() sobre socket AF_ALG (SYS_sendmsg = 46)
 SEC("raw_tracepoint/sys_enter")
 int raw_sys_enter_sendmsg(struct bpf_raw_tracepoint_args *ctx) {
     unsigned long syscall_id = ctx->args[1];

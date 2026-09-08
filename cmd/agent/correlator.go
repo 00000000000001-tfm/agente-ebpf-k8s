@@ -6,7 +6,7 @@
 //   - Tres niveles de respuesta según severidad
 //   - Debounce por código de evento (no repetir el mismo en 10s)
 //   - Whitelist de imágenes para evitar falsos positivos
-//   - Baseline: ignora eventos de pods en fase de aprendizaje (primeros 5 min)
+//   - Baseline: ignora eventos de pods en fase de aprendizaje (primeros 1 min y medio)
 
 package main
 
@@ -21,9 +21,9 @@ import (
 // ─── Niveles de respuesta ────────────────────────────────────────────────────
 
 const (
-	LevelObserve    = 1 // score 8-12:  solo alertar, sin bloquear
-	LevelQuarantine = 2 // score 12-20: NetworkPolicy + Kyverno banlist
-	LevelKill       = 3 // score >20:   SIGKILL + cordon nodo + PagerDuty
+	LevelObserve    = 1 // solo alertar, sin bloquear
+	LevelQuarantine = 2 // NetworkPolicy + Kyverno banlist
+	LevelKill       = 3 // SIGKILL + cordon nodo + PagerDuty
 )
 
 // ─── Estado de score por pod ─────────────────────────────────────────────────
@@ -95,8 +95,6 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
 
 	// ── Fase de baseline: no alertar, solo aprender ──────────────────────────
 	if now.Before(state.BaselineEnd) {
-		// Durante el baseline registramos actividad pero no sumamos score
-		// El agente Go construirá el perfil de syscalls normales aquí
 		return 0
 	}
 
@@ -118,7 +116,7 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
 	// ── Debounce: mismo código no suma dos veces en cooldown ─────────────────
 	eventKey := uint16(sensorID)<<8 | uint16(code)
 	if last, seen := state.EventCodes[eventKey]; seen && now.Sub(last) < codeCooldown {
-		return 0 // mismo evento muy reciente — ignorar
+		return 0
 	}
 	state.EventCodes[eventKey] = now
 
@@ -147,8 +145,6 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
                 if distinctSensors >= 2 {
                         newLevel = LevelKill
                 } else {
-                        // Score alto pero de un solo sensor: no escalamos a Kill,
-                        // nos quedamos en cuarentena hasta que se confirme un segundo vector.
                         newLevel = LevelQuarantine
                 }
         case state.Score >= 12:
@@ -157,7 +153,6 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
                 newLevel = LevelObserve
         }
 
-	// Solo disparar si subimos de nivel (no repetir el mismo nivel)
 	if newLevel > 0 && newLevel > state.Level {
 		state.Level = newLevel
 		return newLevel
@@ -165,14 +160,12 @@ func (c *Correlator) AddEvent(mntns uint32, sensorID, code uint8, delta int8, po
 	return 0
 }
 
-// ResetPod elimina el estado de un pod cuando termina
 func (c *Correlator) ResetPod(mntns uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.states, mntns)
 }
 
-// GetScore devuelve el score actual de un pod (para métricas)
 func (c *Correlator) GetScore(mntns uint32) int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -184,7 +177,6 @@ func (c *Correlator) GetScore(mntns uint32) int {
 	return 0
 }
 
-// gcLoop elimina estados de pods que llevan más de 2 minutos inactivos
 func (c *Correlator) gcLoop() {
 	ticker := time.NewTicker(60 * time.Second)
 	for range ticker.C {
@@ -211,14 +203,13 @@ func (c *Correlator) gcLoop() {
 //   - CI runners ejecutan shells constantemente
 
 type whitelistEntry struct {
-	imageSubstr string // substring de la imagen (vacío = cualquiera)
-	commSubstr  string // substring del proceso (vacío = cualquiera)
+	imageSubstr string
+	commSubstr  string
 	sensorID    uint8
 	code        uint8
 }
 
 var whitelist = []whitelistEntry{
-	// runc genera eventos en el arranque de cualquier contenedor — ignorarlos
 	{commSubstr: "runc", sensorID: SENSOR_COPY_FAIL, code: CF_SENDMSG_ALG},
 	{commSubstr: "runc", sensorID: SENSOR_RS, code: 2}, // rsDupStdFD
 	{commSubstr: "runc", sensorID: SENSOR_RS, code: 3}, // rsExecSuspect
@@ -231,17 +222,12 @@ var whitelist = []whitelistEntry{
 	{commSubstr: "runc", sensorID: SENSOR_PE, code: 5}, // aCapset
 	{commSubstr: "runc", sensorID: SENSOR_PE, code: 7}, // aMount
 	{commSubstr: "runc", sensorID: SENSOR_PE, code: 8}, // aPivotRoot
-	// Vault y Consul usan AF_ALG legítimamente para crypto
 	{imageSubstr: "vault",       sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
 	{imageSubstr: "consul",      sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
-	// OpenSSL en algunos contenedores de base también
 	{imageSubstr: "strongswan",  sensorID: SENSOR_COPY_FAIL, code: CF_AF_ALG_SOCKET},
-	// Prometheus exporters hacen muchas conexiones — ignorar CM_STRATUM para ellos
-	// (un exporter no debería conectar a 3333 pero por seguridad lo filtramos)
 	{imageSubstr: "prometheus",  sensorID: SENSOR_DNS_EXFIL, code: DNS_HIGH_RATE},
 }
 
-// Constantes de sensores y códigos (mirror de common.h para Go)
 const (
 	SENSOR_PE          = 1
 	SENSOR_RS          = 2
@@ -277,7 +263,6 @@ func isWhitelisted(image string, comm string, sensorID, code uint8) bool {
 	return false
 }
 
-// updatePodScoreMetric actualiza la métrica de Prometheus para el score del pod
 func (c *Correlator) updatePodScoreMetric(mntns uint32, image string, score int) {
 	key := fmt.Sprintf("%d", mntns)
 	metricPodScore.WithLabelValues(key, image).Set(float64(score))

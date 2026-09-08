@@ -1,3 +1,5 @@
+// reverse_shell_detector.bpf.c - Detector reverse shell
+//
 // Se disparara cuando un pod supervisado por el agente realiza lo siguiente:
 //  1) connect (2) a una direccion IPv4 no privada (code=1, arg=puerto destino, ipv4=IP destino)
 //  2) duplicar (dup2/dup3) un socket conectado a stdin/stdout/stderr (code=2, argumento=newfd)

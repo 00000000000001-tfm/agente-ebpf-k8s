@@ -48,7 +48,7 @@ struct unified_event {
 // para que el linker de eBPF los fusione en uno solo.
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 1 << 22); // 4 MiB — más grande que antes
+    __uint(max_entries, 1 << 22); // 4 MiB 
 } unified_events SEC(".maps");
 
 // ─── Watchlist compartida ─────────────────────────────────────────────────────
