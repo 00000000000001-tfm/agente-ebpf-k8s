@@ -2,3 +2,5 @@ build/
 *.save
 *.save.*
 bpf/vmlinux.h
+/buildkit-v0.13.2.linux-amd64.tar.gz
+/nerdctl-1.7.6-linux-amd64.tar.gz
