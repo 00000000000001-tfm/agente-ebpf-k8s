@@ -220,7 +220,9 @@ bash deploy/scripts/run-pentest.sh
 │   ├── responder.go        # Respuesta graduada L1/L2/L3
 │   ├── metrics.go          # Métricas Prometheus
 │   └── reverse_shell.go
+├── internal/bpf/           # Bpf
 ├── internal/kyverno/       # Integración con Kyverno
+├── kyverno                 # Kyverno
 ├── manifests/              # Manifiestos Kubernetes del agente
 │   └── monitoring/         # Prometheus + Grafana
 ├── rbac/                   # ClusterRoles y bindings
